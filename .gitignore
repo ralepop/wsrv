@@ -1,0 +1,9 @@
+wsrv
+*.exe
+*.test
+*.out
+
+.DS_Store
+
+.vscode/
+.idea/
