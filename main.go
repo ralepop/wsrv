@@ -6,6 +6,14 @@ import (
 	"net"
 )
 
+func accepter(listener net.Listener) (net.Conn, error) {
+	conn, err := listener.Accept()
+	if err != nil {
+		log.Printf("Failed to accept connection: %v", err)
+		continue
+	}
+}
+
 func main() {
 
 	// definisemo CLI flegove
@@ -24,11 +32,7 @@ func main() {
 	
 	// petlja koja prihvata konekcije
 	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			log.Printf("Failed to accept connection: %v", err)
-			continue
-		}
+		go accepter(listener)
 
 		// citamo bajtove iz TCP konekcije
 		buf := make([]byte, maxHeaderBytes)
