@@ -1,16 +1,28 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 )
 
-const bufSize = 64 * 1024 // 64 KB
+// HTTP 413: Payload Too Large, odnosi se na body
+// HTTP 431: Request Header Fields Too Large, odnosi se na header
+
+const readBufSize = 4 * 1024 // koliko bufio.Reader vuce iz soketa u jednom koraku, 4KB
+const headerLimit = 8 * 1024 // koliko bajtova headera prihvatamo pre 431
+const maxBody = 1024 * 1024  // gornja granica tela pre 413
 
 var (
+	ErrBadRequest      = errors.New("400 Bad Request")
+	ErrNotImplemented  = errors.New("501 Not Implemented")
+	ErrPayloadTooLarge = errors.New("413 Payload Too Large")
+	ErrLengthRequired  = errors.New("411 Length Required")
+
 	ErrRequestTooLarge = errors.New("request header exceeds limit")
 	ErrMalformedHeader = errors.New("malformed HTTP request header")
 	ErrInvalidMethod   = errors.New("invalid HTTP request line")
@@ -25,26 +37,47 @@ type Request struct {
 	Body    []byte
 }
 
-func parseRequest(raw []byte) (*Request, error) {
-	if len(raw) > bufSize {
-		return nil, ErrRequestTooLarge
+func readLine(r *bufio.Reader) ([]byte, error) {
+
+	// ReadBytes('\n') vraca kopiju []byte, alokacija po liniji, bezbedan sadrzaj
+	lineBytes, err := r.ReadBytes('\n')
+	return lineBytes, err
+}
+
+func parseRequest(r *bufio.Reader) (*Request, error) {
+
+	// HEADER LOOP
+
+	total := 0
+	var lines []string
+
+	for {
+		line, err := readLine(r)
+
+		if err != nil {
+			if err == io.EOF {
+				return nil, ErrMalformedHeader
+			}
+			return nil, err
+		}
+
+		total += len(line)
+
+		if total > headerLimit {
+			return nil, ErrRequestTooLarge
+		}
+
+		// skidamo \r i \n sa kraja
+		line = bytes.TrimRight(line, "\r\n")
+
+		// ako je linija prazna
+		if len(line) == 0 {
+			break
+		}
+
+		lines = append(lines, string(line))
 	}
 
-	// razdvajamo zaglavlja od tela - "\r\n\r\n"
-	headerEnd := bytes.Index(raw, []byte("\r\n\r\n"))
-	var headerBytes []byte
-	var bodyBytes []byte
-
-	if headerEnd != -1 {
-		headerBytes = raw[:headerEnd]
-		bodyBytes = raw[headerEnd+4:] // preskacemo "\r\n\r\n"
-	} else {
-		// ukoliko nema body
-		headerBytes = raw
-	}
-
-	// delimo header
-	lines := bytes.Split(headerBytes, []byte("\r\n"))
 	if len(lines) == 0 || len(lines[0]) == 0 {
 		return nil, ErrInvalidMethod
 	}
@@ -85,21 +118,76 @@ func parseRequest(raw []byte) (*Request, error) {
 		req.Headers[key] = val
 	}
 
-	if clStr, exists := req.Headers["content-length"]; exists {
-		expectedLen, err := strconv.Atoi(clStr)
-		if err != nil || expectedLen < 0 {
-			return nil, fmt.Errorf("invalid Content-Length value: %w", ErrMalformedHeader)
+	teStr, teExists := req.Headers["transfer-encoding"]
+	clStr, clExists := req.Headers["content-length"]
+
+	if teExists {
+		// ako ima i TE i CL -> 400 (anti-smuggling)
+		if clExists {
+			return nil, fmt.Errorf("both TE and CL present: %w", ErrBadRequest)
 		}
 
-		// provera da li smo dobili dovoljno bajtova tela
-		if len(bodyBytes) < expectedLen {
-			return nil, ErrIncompleteBody
-		}
+		// delimo enkodovanja ako ih ima vise (npr. "gzip, chunked")
+		teParts := strings.Split(teStr, ",")
+		lastEncoding := strings.TrimSpace(strings.ToLower(teParts[len(teParts)-1]))
 
-		req.Body = bodyBytes[:expectedLen]
-	} else {
-		req.Body = bodyBytes
+		if lastEncoding == "chunked" {
+			// ne implementiramo chunked -> 501
+			return nil, fmt.Errorf("chunked TE not supported: %w", ErrNotImplemented)
+		} else {
+			// chunked nije na kraju TE -> 501
+			return nil, fmt.Errorf("TE without final chunked: %w", ErrNotImplemented)
+		}
 	}
 
-	return req, nil
+	if clExists {
+
+		if len(clStr) == 0 {
+			return nil, fmt.Errorf("CL is empty: %w", ErrBadRequest)
+		}
+
+		// moze biti samo cifra, bez minusa, slova, razmaka
+		for _, ch := range clStr {
+			if ch < '0' || ch > '9' {
+				return nil, fmt.Errorf("CL is not 1*DIGIT: %w", ErrBadRequest)
+			}
+		}
+
+		expectedLen, err := strconv.Atoi(clStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid CL value: %w", ErrBadRequest)
+		}
+
+		// N > maxBody -> 413 (pre alociranja)
+		if expectedLen > maxBody {
+			return nil, ErrPayloadTooLarge
+		}
+
+		// citamo tacno expectedLen bajtova
+		req.Body = make([]byte, expectedLen)
+		_, err = io.ReadFull(r, req.Body)
+
+		if err != nil {
+			switch err {
+			case io.EOF, io.ErrUnexpectedEOF:
+				return nil, ErrIncompleteBody
+			default:
+				return nil, ErrBadRequest
+			}
+		}
+
+		return req, nil
+	}
+
+	// nema ni TE ni CL
+	switch req.Method {
+	case "POST", "PUT", "PATCH":
+		// ako je POST/PUT/PATCH, treba duzina tela
+		return nil, ErrLengthRequired // 411
+
+	default:
+		// inace (GET, HEAD, DELETE, ...), duzina tela je 0
+		req.Body = nil
+		return req, nil
+	}
 }

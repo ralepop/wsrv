@@ -1,10 +1,29 @@
 package main
 
 import (
+	"bufio"
+	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net"
 )
+
+func statusForError(err error) (int, string) {
+	switch {
+	case errors.Is(err, ErrPayloadTooLarge):
+		return 413, "Payload Too Large"
+	case errors.Is(err, ErrNotImplemented):
+		return 501, "Not Implemented"
+	case errors.Is(err, ErrLengthRequired):
+		return 411, "Length Required"
+	case errors.Is(err, ErrRequestTooLarge):
+		return 431, "Request Header Fields Too Large"
+	default:
+		// Za sve ostalo (ErrMalformedHeader, ErrInvalidMethod, ErrBadRequest, ...)
+		return 400, "Bad Request"
+	}
+}
 
 /*
 Opsluzuje jednu vec prihvacenu konekciju (main prihvata).
@@ -12,18 +31,23 @@ Opsluzuje jednu vec prihvacenu konekciju (main prihvata).
 func handleConn(conn net.Conn) {
 	defer conn.Close()
 
-	buf := make([]byte, bufSize)
-	n, err := conn.Read(buf)
-	if err != nil {
-		log.Printf("Read error: %v", err)
-		return
-	}
+	reader := bufio.NewReaderSize(conn, readBufSize)
 
 	// parsiramo primljeni zahtev
-	req, err := parseRequest(buf[:n])
+	req, err := parseRequest(reader)
+
 	if err != nil {
 		log.Printf("Parse error: %v", err)
-		conn.Write([]byte("HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\n\r\nBad Request"))
+
+		code, text := statusForError(err)
+		body := text
+
+		response := fmt.Sprintf(
+			"HTTP/1.1 %d %s\r\nContent-Length: %d\r\n\r\n%s",
+			code, text, len(body), body,
+		)
+
+		conn.Write([]byte(response))
 		return
 	}
 
