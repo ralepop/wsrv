@@ -6,12 +6,31 @@ import (
 	"net"
 )
 
-func accepter(listener net.Listener) (net.Conn, error) {
-	conn, err := listener.Accept()
+/*
+Opsluzuje jednu vec prihvacenu konekciju (main prihvata).
+*/
+func handleConn(conn net.Conn) {
+	defer conn.Close()
+
+	buf := make([]byte, bufSize)
+	n, err := conn.Read(buf)
 	if err != nil {
-		log.Printf("Failed to accept connection: %v", err)
-		continue
+		log.Printf("Read error: %v", err)
+		return
 	}
+
+	// parsiramo primljeni zahtev
+	req, err := parseRequest(buf[:n])
+	if err != nil {
+		log.Printf("Parse error: %v", err)
+		conn.Write([]byte("HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\n\r\nBad Request"))
+		return
+	}
+
+	log.Printf("Handled request: %s %s %s", req.Method, req.Path, req.Version)
+
+	// privremeni odgovor
+	conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 12\r\n\r\nHello World!"))
 }
 
 func main() {
@@ -29,33 +48,14 @@ func main() {
 		log.Fatalf("Failed to bind port: %v", err)
 	}
 	defer listener.Close()
-	
+
 	// petlja koja prihvata konekcije
 	for {
-		go accepter(listener)
-
-		// citamo bajtove iz TCP konekcije
-		buf := make([]byte, maxHeaderBytes)
-		n, err := conn.Read(buf)
+		conn, err := listener.Accept() // sinhrono
 		if err != nil {
-			log.Printf("Read error: %v", err)
-			conn.Close()
+			log.Printf("Failed to accept connection: %v", err)
 			continue
 		}
-
-		// parsiramo primljeni zahtev
-		req, err := ParseRequest(buf[:n])
-		if err != nil {
-			log.Printf("Parse error: %v", err)
-			conn.Write([]byte("HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\n\r\nBad Request"))
-			conn.Close()
-			continue
-		}
-
-		log.Printf("Handled request: %s %s %s", req.Method, req.Path, req.Version)
-
-		// privremeni odgovor
-		conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 12\r\n\r\nHello World!"))
-		conn.Close()
+		go handleConn(conn)
 	}
 }

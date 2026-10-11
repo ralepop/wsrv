@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-const maxHeaderBytes = 64 * 1024 // 64 KB
+const bufSize = 64 * 1024 // 64 KB
 
 var (
 	ErrRequestTooLarge = errors.New("request header exceeds limit")
@@ -18,15 +18,15 @@ var (
 )
 
 type Request struct {
-	Method 		string
-	Path 		string
-	Version 	string
-	Headers 	map[string]string
-	Body		[]byte
+	Method  string
+	Path    string
+	Version string
+	Headers map[string]string
+	Body    []byte
 }
 
-func ParseRequest(raw []byte) (*Request, error) {
-	if len(raw) > maxHeaderBytes {
+func parseRequest(raw []byte) (*Request, error) {
+	if len(raw) > bufSize {
 		return nil, ErrRequestTooLarge
 	}
 
@@ -57,10 +57,10 @@ func ParseRequest(raw []byte) (*Request, error) {
 	}
 
 	req := &Request{
-		Method: 	parts[0],
-		Path: 		parts[1],
-		Version: 	parts[2],
-		Headers: 	make(map[string]string),
+		Method:  parts[0],
+		Path:    parts[1],
+		Version: parts[2],
+		Headers: make(map[string]string),
 	}
 
 	// validacija protokola
