@@ -41,7 +41,7 @@ type Request struct {
 
 func readLine(r *bufio.Reader) ([]byte, error) {
 
-	// ReadBytes('\n') vraca kopiju []byte, alokacija po liniji, bezbedan sadrzaj
+	// ReadBytes('\n') vraca kopiju []byte, alokacija po liniji
 	lineBytes, err := r.ReadBytes('\n')
 
 	if err != nil && err != io.EOF {
@@ -93,7 +93,7 @@ func parseRequest(r *bufio.Reader) (*Request, error) {
 	}
 
 	// parsiramo prvu liniju (npr. "GET /index.html HTTP/1.1")
-	requestLine := string(lines[0])
+	requestLine := lines[0]
 	parts := strings.Split(requestLine, " ")
 	if len(parts) != 3 {
 		return nil, ErrInvalidMethod
@@ -113,7 +113,7 @@ func parseRequest(r *bufio.Reader) (*Request, error) {
 
 	// parsiramo ostala zaglavlja
 	for i := 1; i < len(lines); i++ {
-		line := string(lines[i])
+		line := lines[i]
 		if line == "" {
 			continue
 		}

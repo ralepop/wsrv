@@ -2,9 +2,7 @@ package main
 
 import (
 	"bufio"
-	"errors"
 	"flag"
-	"fmt"
 	"log"
 	"net"
 	"runtime/debug"
@@ -13,24 +11,6 @@ import (
 
 const readTimeout = 5 * time.Second  // cekanje da klijent posalje zahtev
 const writeTimeout = 5 * time.Second // cekanje da klijent primi odgovor
-
-func statusForError(err error) (int, string) {
-	switch {
-	case errors.Is(err, ErrPayloadTooLarge):
-		return 413, "Payload Too Large"
-	case errors.Is(err, ErrNotImplemented):
-		return 501, "Not Implemented"
-	case errors.Is(err, ErrLengthRequired):
-		return 411, "Length Required"
-	case errors.Is(err, ErrRequestTooLarge):
-		return 431, "Request Header Fields Too Large"
-	case errors.Is(err, ErrTimeout):
-		return 408, "Request Timeout"
-	default:
-		// Za sve ostalo (ErrMalformedHeader, ErrInvalidMethod, ErrBadRequest, ...)
-		return 400, "Bad Request"
-	}
-}
 
 /*
 Opsluzuje jednu vec prihvacenu konekciju (main prihvata).
@@ -49,27 +29,25 @@ func handleConn(conn net.Conn) {
 	// parsiramo primljeni zahtev
 	req, err := parseRequest(reader)
 
+	w := newResponseWriter(conn)
+
 	conn.SetWriteDeadline(time.Now().Add(writeTimeout))
 
 	if err != nil {
 		log.Printf("Parse error: %v", err)
+		writeError(w, err)
+	} else {
+		log.Printf("Handled request: %s %s %s", req.Method, req.Path, req.Version)
 
-		code, text := statusForError(err)
-		body := text
-
-		response := fmt.Sprintf(
-			"HTTP/1.1 %d %s\r\nContent-Length: %d\r\n\r\n%s",
-			code, text, len(body), body,
-		)
-
-		conn.Write([]byte(response))
-		return
+		body := "Hello World!"
+		w.writeHeader(200, len(body))
+		w.Write([]byte(body))
 	}
 
-	log.Printf("Handled request: %s %s %s", req.Method, req.Path, req.Version)
-
-	// privremeni odgovor
-	conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 12\r\n\r\nHello World!"))
+	// klijent je mozda otisao pre nego sto je odgovor upisan
+	if w.err != nil {
+		log.Printf("Write failed: %v", w.err)
+	}
 }
 
 func main() {
