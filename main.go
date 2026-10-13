@@ -7,7 +7,12 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"runtime/debug"
+	"time"
 )
+
+const readTimeout = 5 * time.Second  // cekanje da klijent posalje zahtev
+const writeTimeout = 5 * time.Second // cekanje da klijent primi odgovor
 
 func statusForError(err error) (int, string) {
 	switch {
@@ -19,6 +24,8 @@ func statusForError(err error) (int, string) {
 		return 411, "Length Required"
 	case errors.Is(err, ErrRequestTooLarge):
 		return 431, "Request Header Fields Too Large"
+	case errors.Is(err, ErrTimeout):
+		return 408, "Request Timeout"
 	default:
 		// Za sve ostalo (ErrMalformedHeader, ErrInvalidMethod, ErrBadRequest, ...)
 		return 400, "Bad Request"
@@ -30,11 +37,19 @@ Opsluzuje jednu vec prihvacenu konekciju (main prihvata).
 */
 func handleConn(conn net.Conn) {
 	defer conn.Close()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("panic: %v\n%s", r, debug.Stack())
+		}
+	}()
 
+	conn.SetReadDeadline(time.Now().Add(readTimeout))
 	reader := bufio.NewReaderSize(conn, readBufSize)
 
 	// parsiramo primljeni zahtev
 	req, err := parseRequest(reader)
+
+	conn.SetWriteDeadline(time.Now().Add(writeTimeout))
 
 	if err != nil {
 		log.Printf("Parse error: %v", err)

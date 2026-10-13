@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"strconv"
 	"strings"
 )
@@ -22,6 +23,7 @@ var (
 	ErrNotImplemented  = errors.New("501 Not Implemented")
 	ErrPayloadTooLarge = errors.New("413 Payload Too Large")
 	ErrLengthRequired  = errors.New("411 Length Required")
+	ErrTimeout         = errors.New("408 Request Timeout")
 
 	ErrRequestTooLarge = errors.New("request header exceeds limit")
 	ErrMalformedHeader = errors.New("malformed HTTP request header")
@@ -41,6 +43,14 @@ func readLine(r *bufio.Reader) ([]byte, error) {
 
 	// ReadBytes('\n') vraca kopiju []byte, alokacija po liniji, bezbedan sadrzaj
 	lineBytes, err := r.ReadBytes('\n')
+
+	if err != nil && err != io.EOF {
+		var ne net.Error
+		if errors.As(err, &ne) && ne.Timeout() {
+			return nil, ErrTimeout
+		}
+	}
+
 	return lineBytes, err
 }
 
@@ -172,6 +182,10 @@ func parseRequest(r *bufio.Reader) (*Request, error) {
 			case io.EOF, io.ErrUnexpectedEOF:
 				return nil, ErrIncompleteBody
 			default:
+				var ne net.Error
+				if errors.As(err, &ne) && ne.Timeout() {
+					return nil, ErrTimeout
+				}
 				return nil, ErrBadRequest
 			}
 		}
