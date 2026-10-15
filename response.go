@@ -13,10 +13,11 @@ type ResponseWriter struct {
 	conn        net.Conn
 	wroteHeader bool
 	err         error
+	keepAlive   bool
 }
 
-func newResponseWriter(conn net.Conn) *ResponseWriter {
-	return &ResponseWriter{conn: conn}
+func newResponseWriter(conn net.Conn, keepAlive bool) *ResponseWriter {
+	return &ResponseWriter{conn: conn, keepAlive: keepAlive}
 }
 
 // writeHeader upisuje status liniju i zaglavlja.
@@ -34,7 +35,11 @@ func (w *ResponseWriter) writeHeader(code int, cl int) {
 		response += fmt.Sprintf("Content-Length: %d\r\n", cl)
 	}
 
-	response += "Connection: close\r\n\r\n"
+	connection := "close"
+	if w.keepAlive {
+		connection = "keep-alive"
+	}
+	response += "Connection: " + connection + "\r\n\r\n"
 
 	if _, err := w.conn.Write([]byte(response)); err != nil {
 		w.err = err
