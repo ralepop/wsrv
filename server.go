@@ -2,20 +2,23 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"log"
 	"net"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 )
 
 type Server struct {
-	Addr, Root string
+	Addr, Root                                              string
 	readTimeout, writeTimeout, idleTimeout, shutdownTimeout time.Duration
+	wg                                                      sync.WaitGroup
 }
 
-func (s *Server) listenAndServe() error {
+func (s *Server) listenAndServe(ctx context.Context) error {
 
 	// otvaramo TCP listener
 	listener, err := net.Listen("tcp", s.Addr)
@@ -24,21 +27,51 @@ func (s *Server) listenAndServe() error {
 	}
 	defer listener.Close()
 
+	// gasenje: zatvaramo listener da bi Accept izasao iz blokade.
+	go func() {
+		<-ctx.Done()
+		log.Printf("Shutting down: no longer accepting connections")
+		listener.Close()
+	}()
+
 	// petlja koja prihvata konekcije
 	for {
 		conn, err := listener.Accept() // sinhrono
 		if err != nil {
+			if ctx.Err() != nil {
+				break
+			}
+
 			log.Printf("Failed to accept connection: %v", err)
 			continue
 		}
+
+		s.wg.Add(1)
 		go s.handleConn(conn)
 	}
+
+	// cekamo da aktivne konekcije zavrse, ali ne duze od shutdownTimeout.
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		log.Printf("Shutdown complete: all connections closed")
+	case <-time.After(s.shutdownTimeout):
+		log.Printf("Shutdown timeout exceeded, forcing exit")
+	}
+
+	return nil
 }
 
 /*
 Opsluzuje jednu vec prihvacenu konekciju.
 */
 func (s *Server) handleConn(conn net.Conn) {
+	defer s.wg.Done()
 	defer conn.Close()
 	defer func() {
 		if r := recover(); r != nil {
