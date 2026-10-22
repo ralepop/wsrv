@@ -15,6 +15,7 @@ import (
 type Server struct {
 	Addr, Root                                              string
 	readTimeout, writeTimeout, idleTimeout, shutdownTimeout time.Duration
+	router                                                  *Router
 	wg                                                      sync.WaitGroup
 }
 
@@ -107,9 +108,16 @@ func (s *Server) serve(conn net.Conn, reader *bufio.Reader) {
 
 		log.Printf("Handled request: %s %s %s", req.Method, req.Path, req.Version)
 
-		body := "Hello World!"
-		w.writeHeader(200, len(body))
-		w.Write([]byte(body))
+		// ruter odlucuje sta je odgovor; greska se pise na jednom mestu
+		if err := s.router.serve(req, w); err != nil {
+			log.Printf("Handler error: %v", err)
+
+			// ako je telo vec pocelo da se pise, odgovor je nepopravljiv:
+			// drugi status bi pokvario tok bajtova na konekciji
+			if !w.wroteHeader {
+				writeError(w, err)
+			}
+		}
 
 		// klijent je mozda otisao pre nego sto je odgovor upisan
 		if w.err != nil {

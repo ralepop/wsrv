@@ -30,6 +30,7 @@ func main() {
 		writeTimeout:    5 * time.Second,
 		idleTimeout:     5 * time.Second,
 		shutdownTimeout: 3 * time.Second,
+		router:          newRouter(*root, []string{"GET", "HEAD"}),
 	}
 
 	if err := server.listenAndServe(ctx); err != nil {

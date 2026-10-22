@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 )
 
@@ -14,10 +15,30 @@ type ResponseWriter struct {
 	wroteHeader bool
 	err         error
 	keepAlive   bool
+	// dodatna zaglavlja, postavljena pre writeHeader; cuvamo ih kao parove
+	// da bi redosled na mrezi bio deterministican
+	headers [][2]string
 }
 
 func newResponseWriter(conn net.Conn, keepAlive bool) *ResponseWriter {
 	return &ResponseWriter{conn: conn, keepAlive: keepAlive}
+}
+
+// setHeader dodaje zaglavlje u odgovor. Posle writeHeader je no-op:
+// header blok je vec na mrezi i ne moze se menjati.
+func (w *ResponseWriter) setHeader(name, value string) {
+	if w.wroteHeader {
+		return
+	}
+
+	for i := range w.headers {
+		if strings.EqualFold(w.headers[i][0], name) {
+			w.headers[i][1] = value
+			return
+		}
+	}
+
+	w.headers = append(w.headers, [2]string{name, value})
 }
 
 // writeHeader upisuje status liniju i zaglavlja.
@@ -33,6 +54,10 @@ func (w *ResponseWriter) writeHeader(code int, cl int) {
 
 	if cl >= 0 {
 		response += fmt.Sprintf("Content-Length: %d\r\n", cl)
+	}
+
+	for _, h := range w.headers {
+		response += h[0] + ": " + h[1] + "\r\n"
 	}
 
 	connection := "close"
@@ -85,6 +110,14 @@ func statusForError(err error) int {
 		return 431
 	case errors.Is(err, ErrTimeout):
 		return 408
+	case errors.Is(err, ErrNotFound):
+		return 404
+	case errors.Is(err, ErrForbidden):
+		return 403
+	case errors.Is(err, ErrMethodNotAllowed):
+		return 405
+	case errors.Is(err, ErrInternal):
+		return 500
 	default:
 		return 400
 	}
@@ -96,6 +129,8 @@ func statusText(code int) string {
 		return "OK"
 	case 400:
 		return "Bad Request"
+	case 403:
+		return "Access Forbidden"
 	case 404:
 		return "Not Found"
 	case 405:
