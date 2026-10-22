@@ -162,7 +162,12 @@ func parseRequest(r *bufio.Reader) (*Request, error) {
 			}
 		}
 
-		req.Headers[key] = val
+		if oldValue, exists := req.Headers[key]; exists {
+			req.Headers[key] = oldValue + ", " + val
+		} else {
+			req.Headers[key] = val
+		}
+
 	}
 
 	hostHeaderStr, hostHeaderExists := req.Headers["host"]
