@@ -118,6 +118,8 @@ func statusForError(err error) int {
 		return 405
 	case errors.Is(err, ErrInternal):
 		return 500
+	case errors.Is(err, ErrHTTPVersionNotSupported):
+		return 505
 	default:
 		return 400
 	}

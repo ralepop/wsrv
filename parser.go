@@ -19,11 +19,12 @@ const headerLimit = 8 * 1024 // koliko bajtova headera prihvatamo pre 431
 const maxBody = 1024 * 1024  // gornja granica tela pre 413
 
 var (
-	ErrBadRequest      = errors.New("400 Bad Request")
-	ErrNotImplemented  = errors.New("501 Not Implemented")
-	ErrPayloadTooLarge = errors.New("413 Payload Too Large")
-	ErrLengthRequired  = errors.New("411 Length Required")
-	ErrTimeout         = errors.New("408 Request Timeout")
+	ErrBadRequest              = errors.New("400 Bad Request")
+	ErrNotImplemented          = errors.New("501 Not Implemented")
+	ErrPayloadTooLarge         = errors.New("413 Payload Too Large")
+	ErrLengthRequired          = errors.New("411 Length Required")
+	ErrTimeout                 = errors.New("408 Request Timeout")
+	ErrHTTPVersionNotSupported = errors.New("505 HTTP Version Not Supported")
 
 	ErrRequestTooLarge = errors.New("request header exceeds limit")
 	ErrMalformedHeader = errors.New("malformed HTTP request header")
@@ -85,6 +86,10 @@ func parseRequest(r *bufio.Reader) (*Request, error) {
 			break
 		}
 
+		if len(lines) > 0 && !validateHeader(line) {
+			return nil, ErrBadRequest
+		}
+
 		lines = append(lines, string(line))
 	}
 
@@ -95,20 +100,34 @@ func parseRequest(r *bufio.Reader) (*Request, error) {
 	// parsiramo prvu liniju (npr. "GET /index.html HTTP/1.1")
 	requestLine := lines[0]
 	parts := strings.Split(requestLine, " ")
+
 	if len(parts) != 3 {
 		return nil, ErrInvalidMethod
+	}
+
+	if !validMethod(parts[0]) {
+		return nil, ErrBadRequest
+	}
+
+	version := parts[2]
+
+	status := checkHTTPVersion(version)
+	if status == 400 {
+		return nil, ErrBadRequest
+	}
+	if status == 505 {
+		return nil, ErrHTTPVersionNotSupported
+	}
+
+	if version != "HTTP/1.0" {
+		version = "HTTP/1.1"
 	}
 
 	req := &Request{
 		Method:  parts[0],
 		Path:    parts[1],
-		Version: parts[2],
+		Version: version,
 		Headers: make(map[string]string),
-	}
-
-	// validacija protokola
-	if !strings.HasPrefix(req.Version, "HTTP/") {
-		return nil, ErrInvalidMethod
 	}
 
 	// parsiramo ostala zaglavlja
@@ -204,4 +223,78 @@ func parseRequest(r *bufio.Reader) (*Request, error) {
 		req.Body = nil
 		return req, nil
 	}
+}
+
+func checkHTTPVersion(ver string) int {
+	if len(ver) != 8 || ver[:5] != "HTTP/" ||
+		ver[5] < '0' || ver[5] > '9' ||
+		ver[6] != '.' ||
+		ver[7] < '0' || ver[7] > '9' {
+		return 400
+	}
+
+	// 505 samo za nepodrzan MAJOR
+	if ver[5] != '1' {
+		return 505
+	}
+
+	return 200
+}
+
+func validMethod(method string) bool {
+	if len(method) == 0 {
+		return false
+	}
+
+	for i := 0; i < len(method); i++ {
+		if !isTokenChar(method[i]) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func validateHeader(line []byte) bool {
+	// mora postojati dvotacka
+	colon := bytes.IndexByte(line, ':')
+	if colon <= 0 {
+		return false
+	}
+
+	// razmak ili tab pre dvotacke nije dozvoljen
+	if line[colon-1] == ' ' || line[colon-1] == '\t' {
+		return false
+	}
+
+	// provera key kod hedera
+	key := line[:colon]
+	for i := 0; i < len(key); i++ {
+		c := line[i]
+		if !isTokenChar(c) {
+			return false
+		}
+	}
+
+	// provera vrednosti hedera
+	value := line[colon+1:]
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+
+		// dozvoljeni su tab i obicni tekstualni bajtovi, ali ne ostali ASCII kontrolni
+		if c == 0 || (c < 32 && c != '\t') || c == 127 {
+			return false
+		}
+	}
+
+	return true
+}
+
+const tcharSet = "!#$%&'*+-.^_`|~"
+
+func isTokenChar(c byte) bool {
+	return (c >= 'a' && c <= 'z') ||
+		(c >= 'A' && c <= 'Z') ||
+		(c >= '0' && c <= '9') ||
+		strings.IndexByte(tcharSet, c) >= 0
 }
