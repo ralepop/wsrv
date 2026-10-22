@@ -130,6 +130,9 @@ func parseRequest(r *bufio.Reader) (*Request, error) {
 		Headers: make(map[string]string),
 	}
 
+	numHostHeaders := 0
+	numCLHeaders := 0
+
 	// parsiramo ostala zaglavlja
 	for i := 1; i < len(lines); i++ {
 		line := lines[i]
@@ -142,9 +145,36 @@ func parseRequest(r *bufio.Reader) (*Request, error) {
 			return nil, ErrMalformedHeader
 		}
 
-		key := strings.ToLower(strings.TrimSpace(line[:c]))
+		key := strings.ToLower(line[:c])
 		val := strings.TrimSpace(line[c+1:])
+
+		if key == "host" {
+			numHostHeaders++
+			if numHostHeaders > 1 {
+				return nil, ErrBadRequest
+			}
+		}
+
+		if key == "content-length" {
+			numCLHeaders++
+			if numCLHeaders > 1 {
+				return nil, ErrBadRequest
+			}
+		}
+
 		req.Headers[key] = val
+	}
+
+	hostHeaderStr, hostHeaderExists := req.Headers["host"]
+
+	// ako Host postoji, mora biti validan
+	if hostHeaderExists && !validHostValue(hostHeaderStr) {
+		return nil, ErrBadRequest
+	}
+
+	// Host je obavezan samo u HTTP/1.1
+	if req.Version == "HTTP/1.1" && !hostHeaderExists {
+		return nil, ErrBadRequest
 	}
 
 	teStr, teExists := req.Headers["transfer-encoding"]
@@ -163,10 +193,9 @@ func parseRequest(r *bufio.Reader) (*Request, error) {
 		if lastEncoding == "chunked" {
 			// ne implementiramo chunked -> 501
 			return nil, fmt.Errorf("chunked TE not supported: %w", ErrNotImplemented)
-		} else {
-			// chunked nije na kraju TE -> 501
-			return nil, fmt.Errorf("TE without final chunked: %w", ErrNotImplemented)
 		}
+
+		return nil, fmt.Errorf("TE without final chunked: %w", ErrBadRequest)
 	}
 
 	if clExists {
@@ -288,6 +317,16 @@ func validateHeader(line []byte) bool {
 	}
 
 	return true
+}
+
+const hostIllegalChars = " /\\@#?"
+
+func validHostValue(v string) bool {
+	if v == "" {
+		return false
+	}
+
+	return !strings.ContainsAny(v, hostIllegalChars)
 }
 
 const tcharSet = "!#$%&'*+-.^_`|~"
